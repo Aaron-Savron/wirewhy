@@ -1,6 +1,6 @@
 {
   "name": "wirewhy",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Check websites, inspect NGINX health, and explain failures with server logs and runtime evidence.",
   "license": "MIT",
   "repository": { "type": "git", "url": "git+https://github.com/Aaron-Savron/wirewhy.git" },

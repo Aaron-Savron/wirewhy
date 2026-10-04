@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/Aaron-Savron/wirewhy/actions/workflows/ci.yml/badge.svg)](https://github.com/Aaron-Savron/wirewhy/actions/workflows/ci.yml)
 
-Check a website, inspect NGINX health, and find the relevant error logs when it fails.
+See whether a website outage is at the public edge or the NGINX origin, then find the relevant logs.
 
-![Wirewhy reports an NGINX 502 and highlights the matching upstream error.](assets/wirewhy-outage-demo.png)
+![Wirewhy compares a public HTTP 502 with a healthy HTTP 200 response from the NGINX origin.](assets/wirewhy-outage-demo.png)
 
 Node 20.3 or newer. Zero runtime dependencies. CommonJS and ESM, with TypeScript types.
 
@@ -27,7 +27,7 @@ wirewhy site https://example.com --local --service app.service
 wirewhy --format json --output report.json
 ```
 
-Site checks use GET and inspect up to 1 MB of the response. On a failed response, Wirewhy reads recent NGINX errors, access logs, and app journals. Entries are filtered by site, request, and time. Repeated upstream errors are collapsed.
+Site checks use GET and inspect up to 1 MB of the response. On failure, Wirewhy probes `/` directly against the matching NGINX listener on the server, preserving the site's Host header and TLS SNI. The probe does not send the URL path or query. Seeing a healthy origin beside a failed public response points you toward the CDN, load balancer, or DNS; a failed origin keeps the focus on NGINX and the app. The report then shows relevant logs.
 
 NGINX config supplies log paths and upstream ports, including named upstreams. Wirewhy discovers a systemd app service from a listening upstream port and remembers it for later crash checks. Use `--service app.service` or `--log /var/log/app.log` to specify one.
 

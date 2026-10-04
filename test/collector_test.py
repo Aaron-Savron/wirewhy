@@ -1,8 +1,11 @@
 import importlib.util
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
+import ssl
 import tempfile
 import unittest
+import threading
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("collector", Path(__file__).resolve().parents[1] / "src/server-collector.py")
@@ -11,6 +14,66 @@ spec.loader.exec_module(collector)
 
 
 class CollectorTests(unittest.TestCase):
+    def test_origin_probe_uses_host_root_and_probe_id(self):
+        observed = {}
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                observed.update(path=self.path, host=self.headers.get("Host"), probe=self.headers.get("X-Wirewhy-Check"))
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"ok")
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            result = collector.probe_origin("example.com", [{"address": "127.0.0.1", "port": server.server_port, "scheme": "http"}], "wirewhy-test", False)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+        self.assertEqual(result["status"], 200)
+        self.assertEqual(observed, {"path": "/", "host": "example.com", "probe": "wirewhy-test"})
+
+    def test_https_origin_probe_preserves_hostname_for_host_and_sni(self):
+        observed = {}
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                observed["host"] = self.headers.get("Host")
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"ok")
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        fixture = Path(__file__).parent / "fixtures"
+        server_context.load_cert_chain(fixture / "cert.pem", fixture / "key.pem")
+        server_context.set_servername_callback(lambda _socket, name, _context: observed.update(sni=name))
+        server.socket = server_context.wrap_socket(server.socket, server_side=True)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with patch.dict(os.environ, {"SSL_CERT_FILE": str(fixture / "cert.pem")}):
+                result = collector.probe_origin("localhost", [{"address": "127.0.0.1", "port": server.server_port, "scheme": "https"}], "wirewhy-test", True)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+        self.assertEqual(result["status"], 200)
+        self.assertEqual(observed, {"sni": "localhost", "host": "localhost"})
+
+    def test_only_loopback_origin_listeners_are_probed(self):
+        self.assertEqual(collector.parse_listener(["127.0.0.1:8080"]), {"address": "127.0.0.1", "port": 8080, "scheme": "http"})
+        self.assertEqual(collector.parse_listener(["[::1]:443", "ssl"]), {"address": "::1", "port": 443, "scheme": "https"})
+        self.assertEqual(collector.parse_listener(["0.0.0.0:80"]), {"address": "127.0.0.1", "port": 80, "scheme": "http"})
+        self.assertIsNone(collector.parse_listener(["192.0.2.10:80"]))
+        self.assertIsNone(collector.parse_listener(["unix:/run/nginx.sock"]))
+        self.assertIsNone(collector.parse_listener(["443", "quic", "reuseport"]))
+
     def test_named_upstreams_and_location_log_inheritance(self):
         text = """
         error_log /var/log/nginx/error.log;

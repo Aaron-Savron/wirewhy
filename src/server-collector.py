@@ -2,14 +2,19 @@
 import base64
 import concurrent.futures
 import datetime
+import http.client
+import ipaddress
 import json
 import os
 import re
 import shlex
 import shutil
+import socket
+import ssl
 import stat
 import subprocess
 import sys
+import time
 from urllib.parse import urlsplit
 
 
@@ -89,6 +94,7 @@ def discover(text, host, prefix):
                  for directive in node["directives"] if directive[0] in ("error_log", "access_log")]
     logs = []
     upstreams = []
+    origin_listeners = []
     for node in matches:
         for kind in ("error_log", "access_log"):
             own = [directive for directive in node["directives"] if directive[0] == kind]
@@ -101,6 +107,13 @@ def discover(text, host, prefix):
                     continue
                 path = directive[1] if os.path.isabs(directive[1]) else os.path.join(prefix, directive[1])
                 logs.append({"path": path, "kind": "nginx-error" if kind == "error_log" else "nginx-access", "siteScoped": scoped})
+        listens = [directive[1:] for directive in node["directives"] if directive[0] == "listen" and len(directive) > 1]
+        if not listens:
+            listens = [["80"]]
+        for args in listens:
+            endpoint = parse_listener(args)
+            if endpoint and endpoint not in origin_listeners:
+                origin_listeners.append(endpoint)
     named = {node["args"][0]: [directive[1] for directive in node["directives"] if directive[0] == "server" and len(directive) > 1]
              for node in walk(tree) if node["name"] == "upstream" and node.get("args")}
     for node in matches:
@@ -110,7 +123,96 @@ def discover(text, host, prefix):
                     value = directive[1]
                     name = urlsplit(value).hostname if "://" in value else value
                     upstreams.extend(named.get(name, [value]))
-    return {"matched": bool(matches), "logs": logs, "upstreams": upstreams}
+    return {"matched": bool(matches), "logs": logs, "upstreams": upstreams, "originListeners": origin_listeners}
+
+
+def parse_listener(args):
+    if "udp" in args or "quic" in args:
+        return None
+    value = args[0]
+    if value.startswith("unix:"):
+        return None
+    address, port = "127.0.0.1", None
+    if value.startswith("[") and "]" in value:
+        address = value[1:value.index("]")]
+        suffix = value[value.index("]") + 1:]
+        port = suffix[1:] if suffix.startswith(":") else None
+    elif value.count(":") == 1:
+        host, candidate = value.rsplit(":", 1)
+        if candidate.isdigit():
+            address, port = host, candidate
+    elif value.isdigit():
+        port = value
+    if address in ("", "*", "0.0.0.0"):
+        address = "127.0.0.1"
+    elif address == "::":
+        address = "::1"
+    elif address == "localhost":
+        address = "127.0.0.1"
+    try:
+        if not ipaddress.ip_address(address).is_loopback:
+            return None
+    except ValueError:
+        return None
+    secure = "ssl" in args or port == "443"
+    port = int(port or ("443" if secure else "80"))
+    if not 1 <= port <= 65535:
+        return None
+    return {"address": address, "port": port, "scheme": "https" if secure else "http"}
+
+
+class OriginHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, address, port, hostname, timeout):
+        super().__init__(address, port, timeout=timeout, context=ssl.create_default_context())
+        self.tls_hostname = hostname
+
+    def connect(self):
+        sock = socket.create_connection((self.host, self.port), self.timeout, self.source_address)
+        if self._tunnel_host:
+            self._tunnel()
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.tls_hostname)
+
+
+def probe_origin(hostname, listeners, probe_id, prefer_tls):
+    if not listeners:
+        return {"checked": False, "reason": "No matching local NGINX listener was found."}
+    preferred_scheme = "https" if prefer_tls else "http"
+    candidates = sorted(listeners, key=lambda item: (item["scheme"] != preferred_scheme, item["address"] != "127.0.0.1"))[:4]
+    failure = None
+    failed_endpoint = candidates[0]
+    for endpoint in candidates:
+        started = time.monotonic()
+        connection = None
+        try:
+            if endpoint["scheme"] == "https":
+                connection = OriginHTTPSConnection(endpoint["address"], endpoint["port"], hostname, 3)
+            else:
+                connection = http.client.HTTPConnection(endpoint["address"], endpoint["port"], timeout=3)
+            connection.request("GET", "/", headers={"Host": hostname, "User-Agent": "Wirewhy origin check", "X-Wirewhy-Check": probe_id})
+            response = connection.getresponse()
+            response.read(65536)
+            return {"checked": True, "scheme": endpoint["scheme"], "port": endpoint["port"], "status": response.status,
+                    "durationMs": round((time.monotonic() - started) * 1000), "error": None}
+        except ssl.SSLCertVerificationError as error:
+            message = getattr(error, "verify_message", "").lower()
+            code = "ORIGIN_CERT_HOSTNAME" if "hostname" in message or "ip address mismatch" in message else "ORIGIN_CERT_INVALID"
+            return {"checked": True, "scheme": endpoint["scheme"], "port": endpoint["port"], "status": None,
+                    "durationMs": round((time.monotonic() - started) * 1000), "error": code}
+        except ssl.SSLError:
+            failure = "ORIGIN_TLS_FAILED"
+        except (socket.timeout, TimeoutError):
+            failure = "ORIGIN_TIMEOUT"
+        except OSError as error:
+            failure = "ORIGIN_CONNECTION_REFUSED" if error.errno in (111, 61, 10061) else "ORIGIN_UNREACHABLE"
+        except http.client.HTTPException:
+            failure = "ORIGIN_BAD_RESPONSE"
+        finally:
+            if connection:
+                connection.close()
+        failed_endpoint = endpoint
+    endpoint = failed_endpoint
+    return {"checked": True, "scheme": endpoint["scheme"], "port": endpoint["port"], "status": None,
+            "durationMs": 0, "error": failure or "ORIGIN_UNREACHABLE"}
 
 
 def tail_file(path):
@@ -183,6 +285,8 @@ def collect(options):
             prefix = match.group(1).strip("'\"")
     discovered = discover(config["stdout"], options["hostname"], prefix)
     output["nginx"]["siteMatched"] = discovered["matched"]
+    if options.get("originCheck"):
+        output["origin"] = probe_origin(options["hostname"], discovered["originListeners"], options.get("probeId", "wirewhy"), options.get("originScheme") == "https")
     service = options.get("service") or auto_service(discovered["upstreams"]) or options.get("discoveredService")
     if service:
         output["app"] = {"service": service, "state": state(command(["systemctl", "is-active", service])), "discovered": not bool(options.get("service"))}

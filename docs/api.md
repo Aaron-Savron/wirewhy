@@ -6,6 +6,8 @@ Returns `Promise<SiteReport>`. Uses GET and reads up to 1 MB of the response und
 
 Options: `ssh` (alias or `user@host`), `sshConfig` (absolute path), `local`, `sudo`, `service` (systemd unit), `logs` (absolute app log paths), `nginxConfig` (absolute path), `includeLogs`, `timeoutMs`, `method`, and `signal`. `discoveredService` supplies a previous unit when the upstream is no longer listening; the CLI saves this automatically.
 
+On a failed public check, Wirewhy probes `/` directly against the matching NGINX listener on the configured server. It sends the site's hostname as `Host` and TLS SNI, then compares that response with the public result. Query strings and custom URL paths are not sent to this probe.
+
 `formatSiteReport(report, format?)` returns text, JSON, or Markdown. The report includes website status, NGINX process/unit/config health, app service status, and selected log excerpts. `complete: false` means server inspection was missing or incomplete.
 
 SSH checks stream a Python 3 collector to the server. No files or agent are installed. Config tests use NGINX’s `-T`; log reads are bounded to recent tail entries and ten-minute journals.

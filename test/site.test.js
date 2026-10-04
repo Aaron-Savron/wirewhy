@@ -48,6 +48,20 @@ test('text output highlights the matching NGINX error without repeated access-lo
   assert.match(output, /Connection refused/);
   assert.doesNotMatch(output, /diagnostic request|client:|private-path|192\.0\.2\.1/);
 });
+test('origin comparison leads the next step when public HTTP fails but NGINX is healthy', () => {
+  const report = {
+    availability: 'unavailable', outcome: 'failed', url: 'https://example.com', complete: true,
+    website: {request: {status: 502, durationMs: 43}, findings: [{confidence: 'confirmed', summary: 'The server returned HTTP 502.', nextSteps: ['Check the upstream service.']}]},
+    server: {location: 'production', nginx: {installed: true, process: 'running', service: 'active', config: 'ok', siteMatched: true}, origin: {checked: true, scheme: 'https', port: 443, status: 200}, app: null, issues: []},
+    logs: []
+  };
+  const output = formatSiteReport(report);
+  assert.match(output, /Website\s+HTTP 502/);
+  assert.match(output, /Origin\s+HTTP 200 from NGINX https:443 \(GET \/, TLS verified\)/);
+  assert.match(output, /The origin is healthy, but the public route failed/);
+  assert.match(output, /Check CDN, load balancer, and DNS routing/);
+  assert.doesNotMatch(output, /Check the upstream service/);
+});
 test('a saved site makes the bare command check immediately without prompting', async t => {
   const app = await server((req, res) => res.end());
   t.after(app.close);
@@ -186,4 +200,38 @@ test('real isolated NGINX outage exposes its actual upstream error log', { skip:
   assert.equal(matched.source, errorLog);
   assert.ok(matched.excerpt.includes('connect() failed'));
   assert.ok(readFileSync(errorLog, 'utf8').includes('Connection refused'));
+});
+
+test('origin check separates a failing public route from a healthy real NGINX origin', { skip: !process.env.WIREWHY_NGINX_BINARY, timeout: 20000 }, async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'wirewhy-origin-nginx-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const reserve = await server((req, res) => res.end());
+  const originPort = reserve.app.address().port;
+  await reserve.close();
+  const publicRoute = await server((req, res) => { res.writeHead(502); res.end('Bad gateway'); });
+  t.after(publicRoute.close);
+  const upstream = await server((req, res) => res.end('healthy origin'));
+  t.after(upstream.close);
+  const upstreamPort = upstream.app.address().port;
+  const configPath = join(directory, 'nginx.conf');
+  writeFileSync(configPath, `pid ${directory}/nginx.pid; error_log ${directory}/error.log; worker_processes 1; events { worker_connections 32; } http { client_body_temp_path ${directory}/body; proxy_temp_path ${directory}/proxy; fastcgi_temp_path ${directory}/fastcgi; uwsgi_temp_path ${directory}/uwsgi; scgi_temp_path ${directory}/scgi; access_log ${directory}/access.log; server { listen 127.0.0.1:${originPort}; server_name 127.0.0.1; location / { proxy_pass http://127.0.0.1:${upstreamPort}; } } }`);
+  const child = spawn(process.env.WIREWHY_NGINX_BINARY, ['-c', configPath, '-e', 'stderr', '-g', 'daemon off;'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = '';
+  child.stderr.on('data', data => stderr += data);
+  t.after(async () => { if (child.exitCode === null) { child.kill('SIGTERM'); await new Promise(resolve => child.once('close', resolve)); } });
+  let ready = false;
+  for (let i = 0; i < 30 && !ready; i++) {
+    try { ready = (await (await fetch(`http://127.0.0.1:${originPort}`)).text()) === 'healthy origin'; } catch { await delay(50); }
+  }
+  assert.ok(ready, stderr);
+  const bin = join(directory, 'bin'); mkdirSync(bin);
+  writeFileSync(join(bin, 'nginx'), `#!/usr/bin/env node\nconst r=require('node:child_process').spawnSync(process.env.WIREWHY_NGINX_BINARY,process.argv.slice(2),{stdio:'inherit'}); process.exit(r.status||0);\n`, { mode: 0o755 });
+  const url = new URL(publicRoute.url);
+  const env = { PATH: `${bin}:${process.env.PATH}`, WIREWHY_CONFIG: join(directory, 'none.json'), WIREWHY_NGINX_BINARY: process.env.WIREWHY_NGINX_BINARY };
+  const result = await run(['site', url.href, '--local', '--nginx-config', configPath], env);
+  assert.equal(result.code, 1, result.stderr);
+  assert.match(result.stdout, /Website\s+HTTP 502/);
+  assert.match(result.stdout, /Origin\s+HTTP 200/);
+  assert.match(result.stdout, /The origin is healthy, but the public route failed/);
+  assert.match(result.stdout, /Check CDN, load balancer, and DNS routing/);
 });

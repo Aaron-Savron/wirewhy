@@ -20,7 +20,7 @@ function validateServerOptions(options = {}) {
 function collectServer(input, options = {}) {
   validateServerOptions(options);
   const url = new URL(String(input));
-  const payload = Buffer.from(JSON.stringify({ hostname: url.hostname.toLowerCase(), service: options.service, discoveredService: options.discoveredService, logs: options.logs, collectLogs: options.collectLogs, nginxConfig: options.nginxConfig })).toString('base64');
+  const payload = Buffer.from(JSON.stringify({ hostname: url.hostname.toLowerCase(), service: options.service, discoveredService: options.discoveredService, logs: options.logs, collectLogs: options.collectLogs, nginxConfig: options.nginxConfig, originCheck: options.originCheck, originScheme: options.originScheme, probeId: options.probeId })).toString('base64');
   const script = readFileSync(join(__dirname, 'server-collector.py'));
   let command;
   let args;

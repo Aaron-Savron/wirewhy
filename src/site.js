@@ -26,12 +26,13 @@ async function inspectSite(input, options = {}) {
   let logs = { entries: [], issues: [] };
   if (options.ssh || options.local) {
     options.onProgress?.(availability === 'unavailable' || options.includeLogs ? 'Checking NGINX and recent site logs' : 'Checking NGINX health');
-    const raw = await collectServer(url, { ...options, collectLogs: availability === 'unavailable' || options.includeLogs });
+    const raw = await collectServer(url, { ...options, originCheck: availability === 'unavailable', originScheme: url.protocol, collectLogs: availability === 'unavailable' || options.includeLogs });
     logs = analyzeLogs(raw, url, probeId);
     server = {
       location: options.ssh || 'local',
       error: raw.error || null,
       nginx: raw.nginx ? { ...raw.nginx, configError: raw.nginx.configError ? redactLog(raw.nginx.configError) : null } : null,
+      origin: raw.origin || null,
       app: raw.app || null,
       issues: [...(raw.issues || []), ...logs.issues]
     };
@@ -64,10 +65,27 @@ function formatSiteReport(report, format = 'text', color = false) {
       if (report.server.app) lines.push(`App       ${report.server.app.service}: ${report.server.app.state}${report.server.app.discovered ? ' (discovered from the upstream port)' : ''}`);
       if (!nginx.siteMatched) lines.push('Site      No matching server_name found in the inspected config.');
     }
+    const origin = report.server.origin;
+    if (origin?.status !== undefined && origin?.status !== null) lines.push(`Origin    HTTP ${origin.status} from NGINX ${origin.scheme}:${origin.port} (GET /${origin.scheme === 'https' ? ', TLS verified' : ''})`);
+    else if (origin?.error) {
+      const detail = origin.error === 'ORIGIN_CERT_HOSTNAME' ? 'TLS certificate hostname mismatch'
+        : origin.error === 'ORIGIN_CERT_INVALID' ? 'TLS certificate is not trusted'
+          : origin.error === 'ORIGIN_TLS_FAILED' ? 'TLS handshake failed'
+            : origin.error === 'ORIGIN_TIMEOUT' ? 'Timed out'
+              : origin.error === 'ORIGIN_CONNECTION_REFUSED' ? 'Connection refused' : 'No HTTP response';
+      lines.push(`Origin    ${detail} via NGINX ${origin.scheme}:${origin.port}`);
+    } else if (origin && !origin.checked) lines.push(`Origin    Not checked: ${origin.reason}`);
+    if (origin?.status !== undefined && origin?.status !== null && report.availability === 'unavailable') {
+      lines.push('', origin.status < 400 ? '[likely] The origin is healthy, but the public route failed.'
+        : origin.status >= 500 ? `[likely] The origin also returned HTTP ${origin.status}.`
+          : `[possible] The origin answered HTTP ${origin.status} directly.`,
+      `  Next: ${origin.status < 400 ? 'Check CDN, load balancer, and DNS routing.' : 'Check origin access rules and NGINX/app logs.'}`);
+    }
   }
   for (const finding of report.website.findings) {
     lines.push('', `[${finding.confidence}] ${finding.summary}`);
-    if (finding.nextSteps[0]) lines.push(`  Next: ${finding.nextSteps[0]}`);
+    const originIsHealthy = report.server?.origin?.status < 400 && report.website.request.status >= 500;
+    if (finding.nextSteps[0] && !originIsHealthy) lines.push(`  Next: ${finding.nextSteps[0]}`);
   }
   if (report.logs.length) {
     const displayLogs = report.logs.filter(entry => entry.code !== 'http.probe' || report.logs.length === 1);

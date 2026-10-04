@@ -91,6 +91,7 @@ export interface SiteReport {
     location: string;
     error: string | null;
     nginx: null | { installed: boolean; version: string | null; service: string; process: string; config: string; configError: string | null; siteMatched: boolean };
+    origin: null | { checked: boolean; reason?: string; scheme?: 'http' | 'https'; port?: number; status?: number | null; durationMs?: number; error?: string | null };
     app: null | { service: string; state: string; discovered: boolean };
     issues: string[];
   };

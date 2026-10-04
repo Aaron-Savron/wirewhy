@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0
+
+- Compare a failed public check with a direct NGINX origin request over SSH.
+- Preserve the origin Host header and TLS SNI without sending query strings or custom paths.
+
 ## 0.2.0
 
 - Make bare `wirewhy` check a saved site, with a first-run setup prompt.
