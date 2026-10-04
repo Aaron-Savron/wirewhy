@@ -33,6 +33,21 @@ test('website inspection uses GET and marks access restrictions separately from 
   assert.ok(formatSiteReport(report).includes('RESTRICTED'));
   assert.deepEqual(JSON.parse(formatSiteReport(report, 'json')), report);
 });
+test('text output highlights the matching NGINX error without repeated access-log detail', () => {
+  const report = {
+    availability: 'unavailable', outcome: 'failed', url: 'https://example.com', complete: true,
+    website: {request: {status: 502, durationMs: 43}, findings: [{confidence: 'confirmed', summary: 'The server returned HTTP 502.', nextSteps: ['Check the upstream service.']}]},
+    server: {location: 'production', nginx: {installed: true, process: 'running', service: 'active', config: 'ok', siteMatched: true, version: 'nginx/1.30.4'}, app: null, issues: []},
+    logs: [
+      {kind: 'nginx-error', confidence: 'likely', correlation: 'site-request', code: 'upstream.refused', summary: 'NGINX could not connect to the upstream app.', source: '/var/log/nginx/error.log', timestamp: '2026-10-04T18:00:00.000Z', excerpt: '2026/10/04 18:00:00 [error] 1#1: *2 connect() failed (111: Connection refused) while connecting to upstream, client: 192.0.2.1, server: example.com, request: "GET /private-path HTTP/1.1", upstream: "http://127.0.0.1:3000/private-path", host: "example.com"', nextStep: 'Check the app service and its listening port.'},
+      {kind: 'nginx-access', confidence: 'confirmed', correlation: 'probe', code: 'http.probe', summary: 'The diagnostic request returned HTTP 502.', source: '/var/log/nginx/access.log', timestamp: '2026-10-04T18:00:00.000Z', excerpt: 'wirewhy probe returned 502', nextStep: 'Inspect the error log.'}
+    ]
+  };
+  const output = formatSiteReport(report);
+  assert.match(output, /Matching error logs:/);
+  assert.match(output, /Connection refused/);
+  assert.doesNotMatch(output, /diagnostic request|client:|private-path|192\.0\.2\.1/);
+});
 test('a saved site makes the bare command check immediately without prompting', async t => {
   const app = await server((req, res) => res.end());
   t.after(app.close);

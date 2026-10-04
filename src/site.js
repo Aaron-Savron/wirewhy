@@ -5,6 +5,15 @@ const { collectServer, validateServerOptions } = require('./server');
 const { analyzeLogs, redactLog } = require('./logs');
 const { validUrl, safeUrl } = require('./privacy');
 
+function conciseLogExcerpt(entry) {
+  const firstLine = entry.excerpt.split('\n', 1)[0];
+  if (entry.kind.startsWith('nginx-')) {
+    const nginx = firstLine.match(/^\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}\s+\[[^\]]+\]\s+[^:]+:\s*(.*?)(?:,\s+(?:client|server|request|upstream|host):|$)/);
+    if (nginx) return nginx[1];
+  }
+  return entry.excerpt.split('\n').slice(0, 2).join('\n');
+}
+
 async function inspectSite(input, options = {}) {
   const url = validUrl(input);
   validateServerOptions(options);
@@ -61,11 +70,13 @@ function formatSiteReport(report, format = 'text', color = false) {
     if (finding.nextSteps[0]) lines.push(`  Next: ${finding.nextSteps[0]}`);
   }
   if (report.logs.length) {
-    lines.push('', report.availability === 'up' ? 'Recent errors (the website currently responds):' : 'Relevant log evidence:');
-    for (const entry of report.logs) {
-      lines.push('', `[${entry.confidence}] ${entry.summary}`, `  ${entry.source}${entry.timestamp ? `  ${entry.timestamp}` : '  (time unverified)'}`);
+    const displayLogs = report.logs.filter(entry => entry.code !== 'http.probe' || report.logs.length === 1);
+    lines.push('', report.availability === 'up' ? 'Recent errors (the website currently responds):' : 'Matching error logs:');
+    for (const entry of displayLogs) {
+      lines.push('', `[${entry.confidence}] ${entry.summary}`, `  ${entry.source}${entry.timestamp ? ` · ${entry.timestamp}` : ' · time unverified'}`);
       if (entry.correlation === 'service') lines.push('  Recent service error; not matched to this individual request.');
-      for (const line of entry.excerpt.split('\n')) lines.push(`  | ${line}`);
+      const excerpt = conciseLogExcerpt(entry);
+      if (excerpt) for (const line of excerpt.split('\n')) lines.push(`  ${line}`);
       lines.push(`  Next: ${entry.nextStep}`);
     }
   } else if (report.availability === 'unavailable') {
