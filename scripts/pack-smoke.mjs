@@ -19,6 +19,7 @@ try {
   const [packed] = JSON.parse(run(npm, ['pack', '--json', '--pack-destination', directory], root));
   assert.ok(!packed.files.some(file => /^(test|node_modules)\/|__pycache__|\.pyc$/.test(file.path)));
   assert.ok(packed.files.some(file => file.path === 'src/server-collector.py'));
+  assert.ok(packed.files.some(file => file.path === 'assets/wirewhy-outage-demo.png'));
   const consumer = join(directory, 'consumer');
   const { mkdirSync } = await import('node:fs');
   mkdirSync(consumer);

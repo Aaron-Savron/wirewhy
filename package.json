@@ -15,7 +15,7 @@
     "./package.json": "./package.json"
   },
   "bin": { "wirewhy": "./src/cli.js" },
-  "files": ["src/*.js", "src/*.mjs", "src/*.d.ts", "src/*.py", "docs", "README.md", "CHANGELOG.md", "LICENSE"],
+  "files": ["src/*.js", "src/*.mjs", "src/*.d.ts", "src/*.py", "docs", "assets", "README.md", "CHANGELOG.md", "LICENSE"],
   "scripts": {
     "test": "node --test test/cli.test.js test/diagnose.test.js test/observe.test.js test/report.test.js test/site.test.js test/logs.test.js",
     "test:types": "tsc --noEmit --strict --noUncheckedSideEffectImports --module nodenext --moduleResolution nodenext --target es2022 test/types.mts test/types.cts",
