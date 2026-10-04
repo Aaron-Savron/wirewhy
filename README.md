@@ -4,18 +4,7 @@
 
 Check a website, inspect NGINX health, and find the relevant error logs when it fails.
 
-```text
-Wirewhy  UNAVAILABLE  https://example.com
-
-Website   HTTP 502
-NGINX     running; unit active; config ok
-App       app.service: failed
-
-[likely] NGINX could not connect to the upstream app.
-  /var/log/nginx/error.log
-  | connect() failed (111: Connection refused) while connecting to upstream
-  Next: Check the app service and its listening port.
-```
+![Wirewhy reports an NGINX 502 and highlights the matching upstream error.](assets/wirewhy-outage-demo.png)
 
 Node 20.3 or newer. Zero runtime dependencies. CommonJS and ESM, with TypeScript types.
 

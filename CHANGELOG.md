@@ -8,6 +8,7 @@
 - Resolve named NGINX upstreams and preserve inherited logs alongside location logs.
 - Show matched error excerpts with timestamps, confidence, and credential redaction.
 - Detect stalled response bodies even after HTTP 200 headers.
+- Show concise, matched error excerpts in the terminal and omit duplicate access-log entries.
 
 ## 0.1.0
 
