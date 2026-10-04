@@ -1,0 +1,31 @@
+name: CI
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [20, 22, 24]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: npm ci
+      - name: Install NGINX for the real outage test
+        if: runner.os == 'Linux' && matrix.node == 22
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y nginx
+          echo 'WIREWHY_NGINX_BINARY=/usr/sbin/nginx' >> "$GITHUB_ENV"
+      - run: npm run check
+      - run: python -B test/collector_test.py
+      - run: npm run test:package
