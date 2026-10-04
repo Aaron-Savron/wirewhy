@@ -41,6 +41,16 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(report["app"]["state"], "failed")
         self.assertTrue(any(call[0] == "journalctl" and call[-1] == "app.service" for call in calls))
 
+    def test_running_process_does_not_invent_a_systemd_unit_state(self):
+        def fake_command(args):
+            if args[0] == "systemctl":
+                return {"code": 1, "stdout": "", "stderr": "System has not been booted with systemd."}
+            return {"code": 0, "stdout": "", "stderr": ""}
+        with patch.object(collector, "command", side_effect=fake_command):
+            report = collector.collect({"hostname": "example.com"})
+        self.assertEqual(report["nginx"]["process"], "running")
+        self.assertEqual(report["nginx"]["service"], "unavailable")
+
     def test_config_with_includes_quotes_and_disabled_access_log(self):
         text = """
         # configuration file /etc/nginx/nginx.conf:

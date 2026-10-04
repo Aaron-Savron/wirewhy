@@ -63,13 +63,20 @@ test('bare command remembers the discovered service for future crash logs', { sk
   const directory = mkdtempSync(join(tmpdir(), 'wirewhy-discovery-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const raw = { nginx: { installed: true, process: 'running', service: 'active', config: 'ok', siteMatched: true }, app: { service: 'app.service', state: 'active', discovered: true }, logs: [], issues: [] };
-  writeFileSync(join(directory, 'ssh'), `#!/usr/bin/env node\nprocess.stdin.resume(); process.stdin.on('end',()=>console.log(${JSON.stringify(JSON.stringify(raw))}));\n`, { mode: 0o755 });
+  const writeSsh = () => writeFileSync(join(directory, 'ssh'), `#!/usr/bin/env node\nprocess.stdin.resume(); process.stdin.on('end',()=>console.log(${JSON.stringify(JSON.stringify(raw))}));\n`, { mode: 0o755 });
+  writeSsh();
   const config = join(directory, 'config.json');
   const env = { WIREWHY_CONFIG: config, PATH: `${directory}:${process.env.PATH}` };
   assert.equal((await run(['setup', app.url, '--ssh', 'production'], env)).code, 0);
   const result = await run([], env);
   assert.equal(result.code, 0, result.stderr);
   assert.equal(JSON.parse(readFileSync(config, 'utf8')).discoveredService, 'app.service');
+  raw.app.state = 'failed';
+  writeSsh();
+  const degraded = await run([], env);
+  assert.equal(degraded.code, 1);
+  assert.ok(degraded.stdout.includes('DEGRADED'));
+  assert.ok(degraded.stdout.includes('HTTP 200'));
 });
 test('bare command without configuration explains the first step instead of hanging on stdin', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'wirewhy-empty-'));

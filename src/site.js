@@ -40,7 +40,8 @@ function formatSiteReport(report, format = 'text', color = false) {
   if (format === 'json') return JSON.stringify(report, null, 2);
   if (!['text', 'markdown'].includes(format)) throw new TypeError('Format must be text, json, or markdown');
   const paint = (text, code) => color && format === 'text' ? `\x1b[${code}m${text}\x1b[0m` : text;
-  const badge = report.availability === 'up' ? paint('UP', 32) : report.availability === 'restricted' ? paint('RESTRICTED', 33) : paint('UNAVAILABLE', 31);
+  const badge = report.availability === 'up' ? report.outcome === 'failed' ? paint('DEGRADED', 33) : paint('UP', 32)
+    : report.availability === 'restricted' ? paint('RESTRICTED', 33) : paint('UNAVAILABLE', 31);
   const lines = [`Wirewhy  ${badge}  ${report.url}`, ''];
   const request = report.website.request;
   lines.push(`Website   ${request.status ? `HTTP ${request.status}${report.website.error ? '; response failed' : ''}` : report.website.error?.codes.join(', ') || 'Request failed'}${request.durationMs !== undefined ? `  (${request.durationMs} ms)` : ''}`);

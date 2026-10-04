@@ -169,8 +169,6 @@ def collect(options):
     process_state = state(running)
     processes = command(["pgrep", "-x", "nginx"])
     daemon = "running" if processes["code"] == 0 else "stopped" if processes["code"] == 1 else "unknown"
-    if process_state == "unavailable" and available:
-        process_state = "active" if daemon == "running" else "inactive" if daemon == "stopped" else "unknown"
     denied = "permission denied" in config["stderr"].lower()
     config_state = "ok" if config["code"] == 0 else "unavailable" if denied or config["code"] in (124, 127) else "invalid"
     match = re.search(r"nginx/[\w.\-]+", version["stderr"] + version["stdout"])
